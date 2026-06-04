@@ -67,9 +67,8 @@ async function startServer() {
 
   async function generateContentWithRetryAndFallback(ai: GoogleGenAI, baseParams: any) {
     const modelsToTry = [
-      'gemini-3.5-flash',
-      'gemini-flash-latest',
-      'gemini-3.1-flash-lite'
+      'gemini-2.5-flash',
+      'gemini-3.5-flash'
     ];
 
     let lastError: any = null;
@@ -78,7 +77,7 @@ async function startServer() {
       const currentModel = modelsToTry[m];
       console.log(`[Gemini API] Attempting generation with model: ${currentModel}`);
 
-      const maxRetries = currentModel === 'gemini-3.5-flash' ? 3 : 2;
+      const maxRetries = (currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-2.5-flash') ? 3 : 2;
       let delay = 1000;
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
