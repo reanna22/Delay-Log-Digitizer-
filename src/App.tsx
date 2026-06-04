@@ -135,12 +135,20 @@ export default function App() {
 
   // Helper to load parsed object into active fields
   const loadServerResult = (data: DigitizeResponse) => {
-    setVessel(data.vessel || '');
-    setDate(data.date || '2-Jun');
-    setShift(data.shift || '1');
-    setForeman(data.foreman || '');
-    setElectrician(data.electrician || '');
-    setEquipmentList(data.equipmentList || '');
+    setVessel(prev => prev || data.vessel || '');
+    setDate(prev => prev || data.date || '2-Jun');
+    setShift(prev => prev || data.shift || '1');
+    setForeman(prev => prev || data.foreman || '');
+    setElectrician(prev => prev || data.electrician || '');
+    setEquipmentList(prev => {
+      if (!prev) return data.equipmentList || '';
+      if (!data.equipmentList) return prev;
+      const combined = Array.from(new Set([
+        ...prev.split(/[\s,]+/),
+        ...data.equipmentList.split(/[\s,]+/)
+      ])).filter(Boolean).join(' ');
+      return combined;
+    });
 
     // Map rows with unique local UUID tags
     const mappedRows: DigitizedRow[] = (data.rows || []).map((r) => ({
@@ -160,7 +168,7 @@ export default function App() {
       isIgnored: r.isIgnored || false,
     }));
 
-    setRows(mappedRows);
+    setRows(prev => [...prev, ...mappedRows]);
     
     // Auto-switch to appropriate tab based on extracted values
     if (mappedRows.length > 0) {
