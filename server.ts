@@ -245,7 +245,34 @@ Rules for fields:
       }
 
       console.log('[API] Gemini Raw response received, text length:', responseText.length);
-      const parsedData = JSON.parse(responseText.trim());
+      
+      let cleanedText = responseText.trim();
+      
+      // Strip markdown code block backticks if present
+      if (cleanedText.startsWith('```')) {
+        cleanedText = cleanedText
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/, '')
+          .replace(/\s*```$/, '')
+          .trim();
+      }
+
+      // Extract only the JSON object between the first '{' and the last '}'
+      const startIdx = cleanedText.indexOf('{');
+      const endIdx = cleanedText.lastIndexOf('}');
+      if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+        cleanedText = cleanedText.substring(startIdx, endIdx + 1);
+      }
+
+      let parsedData;
+      try {
+        parsedData = JSON.parse(cleanedText);
+      } catch (jsonErr: any) {
+        console.error('[API] JSON Parse Error. Raw response was:', responseText);
+        console.error('[API] Cleaned substring for parse was:', cleanedText);
+        console.error('[API] Parse error message:', jsonErr.message);
+        throw new Error(`The digitization results from the AI model were not in a valid JSON format. Details: ${jsonErr.message}`);
+      }
 
       res.json({
         success: true,
