@@ -28,3 +28,60 @@ export function calculateMinutesDiff(start: string, end: string): number {
     return 0;
   }
 }
+
+/**
+ * Returns a comparable numeric value (e.g. month * 100 + day) for chronological sorting.
+ * Handles formats like: "22-May", "May 22", "2-Jun", "22/05", "20/5", "20-5", "2-6", etc.
+ * Supports alphabetical month names/abbreviations.
+ */
+export function parseDateToComparable(dateStr: string, globalDateFallback?: string): number {
+  const target = (dateStr || globalDateFallback || '2-Jun').trim().toLowerCase();
+  if (!target) return 0;
+
+  const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  
+  // 1. Try to find alphabetic month index
+  let foundMonthIdx = -1;
+  for (let i = 0; i < months.length; i++) {
+    if (target.includes(months[i])) {
+      foundMonthIdx = i;
+      break;
+    }
+  }
+
+  // Extract numeric components
+  const numbers = target.match(/\d+/g)?.map(Number) || [];
+
+  if (foundMonthIdx !== -1) {
+    // If a month word was found, the first number in the string is likely the day (e.g., 20 in "May 20" or "20-May")
+    const day = numbers.length > 0 ? numbers[0] : 1;
+    return (foundMonthIdx + 1) * 100 + day;
+  }
+
+  // 2. If it is standard digit-based (e.g., 20/5, 20-5, 2/6, 5/20)
+  if (numbers.length >= 2) {
+    const num1 = numbers[0];
+    const num2 = numbers[1];
+
+    if (num1 > 12 && num2 <= 12) {
+      // num1 is day, num2 is month (e.g., 20/5)
+      return num2 * 100 + num1;
+    } else if (num2 > 12 && num1 <= 12) {
+      // num1 is month, num2 is day (e.g., 5/20)
+      return num1 * 100 + num2;
+    } else {
+      // Standard UK/Maritime DD/MM format (e.g., 2/6 => 2nd of June)
+      const day = num1;
+      const month = num2;
+      return month * 100 + day;
+    }
+  }
+
+  // 3. Fallback for single number (treat as day of June)
+  if (numbers.length === 1) {
+    return 6 * 100 + numbers[0];
+  }
+
+  return 0;
+}
+

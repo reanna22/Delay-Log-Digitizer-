@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DigitizedRow, EquipmentType } from '../types';
-import { calculateMinutesDiff } from './utils';
+import { calculateMinutesDiff, parseDateToComparable } from './utils';
 import { 
   Clipboard, 
   Download, 
@@ -38,7 +38,14 @@ export default function DataTable({
   const [copiedText, setCopiedText] = useState(false);
 
   // Filter rows for this specific equipment tab
-  const activeRows = rows.filter(r => r.equipmentType === equipmentType);
+  const activeUnsortedRows = rows.filter(r => r.equipmentType === equipmentType);
+
+  // Sort rows chronologically by date
+  const activeRows = [...activeUnsortedRows].sort((a, b) => {
+    const valA = parseDateToComparable(a.date || '', globalDate);
+    const valB = parseDateToComparable(b.date || '', globalDate);
+    return valA - valB;
+  });
 
   // Time calculations and total sums for the active tab
   const activeValidRows = activeRows.filter(r => !r.isIgnored);
