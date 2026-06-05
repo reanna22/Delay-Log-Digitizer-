@@ -3,7 +3,7 @@ import { Upload, FileImage, Sparkles, Check, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface UploadZoneProps {
-  onImageSelected: (base64: string, fileType: string) => void;
+  onImagesSelected: (images: { base64: string; fileType: string; name: string }[]) => void;
   onSampleSelected: (sampleType: 'crane' | 'rtg_rmg') => void;
   isProcessing: boolean;
   statusMessage?: string;
@@ -11,7 +11,7 @@ interface UploadZoneProps {
 }
 
 export default function UploadZone({
-  onImageSelected,
+  onImagesSelected,
   onSampleSelected,
   isProcessing,
   statusMessage,
@@ -29,33 +29,54 @@ export default function UploadZone({
     setIsDragOver(false);
   };
 
-  const processFile = (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      alert('Please upload an image file (PNG, JPG, or JPEG)');
+  const processFiles = (files: File[]) => {
+    const validImageFiles = files.filter(file => file.type.startsWith('image/'));
+    if (validImageFiles.length === 0) {
+      alert('Please upload image files (PNG, JPG, or JPEG)');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        const base64Data = reader.result.split(',')[1];
-        onImageSelected(base64Data, file.type);
-      }
-    };
-    reader.readAsDataURL(file);
+    const promises = validImageFiles.map(file => {
+      return new Promise<{ base64: string; fileType: string; name: string }>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            const base64Data = reader.result.split(',')[1];
+            resolve({
+              base64: base64Data,
+              fileType: file.type,
+              name: file.name
+            });
+          } else {
+            reject(new Error('Failed to read file'));
+          }
+        };
+        reader.onerror = () => reject(reader.error || new Error('File read error'));
+        reader.readAsDataURL(file);
+      });
+    });
+
+    Promise.all(promises)
+      .then(results => {
+        onImagesSelected(results);
+      })
+      .catch(err => {
+        console.error('Error reading files:', err);
+        alert('Failed reading one or more image files.');
+      });
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      processFile(e.dataTransfer.files[0]);
+      processFiles(Array.from(e.dataTransfer.files));
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      processFile(e.target.files[0]);
+      processFiles(Array.from(e.target.files));
     }
   };
 
@@ -82,6 +103,7 @@ export default function UploadZone({
           ref={fileInputRef}
           onChange={handleFileChange}
           accept="image/*"
+          multiple
           className="hidden"
           disabled={isProcessing}
         />
@@ -93,7 +115,7 @@ export default function UploadZone({
               <Sparkles className="absolute inset-0 m-auto text-[#0284C7] h-5 w-5 animate-pulse" />
             </div>
             <div className="space-y-1">
-              <p className="font-semibold text-slate-800">Analyzing Log Sheet...</p>
+              <p className="font-semibold text-slate-800">Analyzing Log Sheet(s)...</p>
               <p className="text-xs text-slate-500 max-w-[280px] animate-pulse">
                 {statusMessage || 'Connecting to Gemini OCR Engine'}
               </p>
@@ -106,7 +128,7 @@ export default function UploadZone({
             </div>
             <div className="space-y-1">
               <p className="text-sm font-semibold text-slate-700">
-                Drag and drop your paper log image here
+                Drag and drop your paper log image(s) here
               </p>
               <p className="text-xs text-[#94A3B8]">
                 Supports PNG, JPG, JPEG up to 20MB

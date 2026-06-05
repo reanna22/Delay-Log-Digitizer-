@@ -6,6 +6,7 @@ export type EquipmentType = 'CRANE' | 'RTG' | 'RMG';
 
 export interface DigitizedRow {
   id: string; // Unique local identifier (uuid or generated index)
+  date?: string; // Optional row-specific date from top of scanned form
   equipmentType: EquipmentType;
   rawEquipmentCode: string; // "7", "09", "01"
   equipmentCode: string; // "4007", "5009", "6001"

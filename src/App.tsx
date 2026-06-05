@@ -76,105 +76,162 @@ export default function App() {
     }
   };
 
-  // Triggers visual OCR digitization on the backend
-  const handleImageDigitize = async (base64: string, fileType: string) => {
+  // Triggers visual OCR digitization on the backend for one or more files in parallel
+  const handleImagesDigitize = async (images: { base64: string; fileType: string; name?: string }[]) => {
+    if (images.length === 0) return;
+
     setIsProcessing(true);
     setScanError(null);
-    setStatusMessage('Reading handwritten headers...');
+    setStatusMessage(`Processing 1 of ${images.length} images...`);
 
-    // Save thumbnail preview
-    setCurrentPreviewUrl(`data:${fileType};base64,${base64}`);
-    setActiveFileName(`Uploaded_log_${new Date().toLocaleDateString().replace(/\//g, '-')}`);
+    // Save thumbnail preview (using first image in the batch)
+    setCurrentPreviewUrl(`data:${images[0].fileType};base64,${images[0].base64}`);
+    
+    const names = images.map(img => img.name || 'document_img').join(', ');
+    setActiveFileName(images.length > 1 ? `Batch (${images.length} files): ${names}` : (images[0].name || 'Uploaded log'));
 
     const steps = [
-      'Identifying log type (Crane vs RTG/RMG)...',
-      'Scanning green circles & Ops vs Maint categories...',
-      'Filtering red diagonal crossout lines...',
-      'Converting equipment codes (e.g., Crane 7 -> 4007)...',
-      'Calculating delay durations and fault details...'
+      'Reading handwritten headers...',
+      'Identifying log types (Crane vs RTG/RMG)...',
+      'Scanning green circles & Ops/Maint categories...',
+      'Converting equipment codes...',
+      'Calculating delay durations & details...',
+      'Merging independent results into database...'
     ];
 
     let currentStep = 0;
+    setStatusMessage(steps[0]);
     const interval = setInterval(() => {
-      if (currentStep < steps.length) {
-        setStatusMessage(steps[currentStep]);
+      if (currentStep < steps.length - 1) {
         currentStep++;
+        setStatusMessage(steps[currentStep]);
       }
-    }, 1800);
+    }, 2005);
 
     try {
-      const response = await fetch('/api/digitize', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ image: base64, mimeType: fileType }),
-      });
+      // Process all images in parallel for maximum speed
+      const results = await Promise.all(
+        images.map(async (img, idx) => {
+          console.log(`[App] Dispatching digitize request for image ${idx + 1}/${images.length}`);
+          const response = await fetch('/api/digitize', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ image: img.base64, mimeType: img.fileType }),
+          });
+
+          const result = await response.json();
+          if (!response.ok || !result.success) {
+            throw new Error(result.error || `Failed digitizing image #${idx + 1}`);
+          }
+          return result.data as DigitizeResponse;
+        })
+      );
 
       clearInterval(interval);
-
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Server returned an error status');
-      }
-
-      const digitizeData: DigitizeResponse = result.data;
-      loadServerResult(digitizeData);
+      loadMergedServerResults(results);
 
     } catch (err: any) {
       clearInterval(interval);
-      console.error('Parsing failed:', err);
+      console.error('Batch parsing failed:', err);
       setScanError(
         err.message || 
-        'Scan failed. Make sure your internet connection is active, and ensure your GEMINI_API_KEY is configured in Settings > Secrets.'
+        'Batch scan failed. Make sure your internet connection is active, and ensure your GEMINI_API_KEY is configured in Settings > Secrets.'
       );
       setIsProcessing(false);
     }
   };
 
-  // Helper to load parsed object into active fields
+  // Helper to load parsed object into active fields for single-item backwards compatibility
   const loadServerResult = (data: DigitizeResponse) => {
-    setVessel(prev => prev || data.vessel || '');
-    setDate(prev => prev || data.date || '2-Jun');
-    setShift(prev => prev || data.shift || '1');
-    setForeman(prev => prev || data.foreman || '');
-    setElectrician(prev => prev || data.electrician || '');
-    setEquipmentList(prev => {
-      if (!prev) return data.equipmentList || '';
-      if (!data.equipmentList) return prev;
-      const combined = Array.from(new Set([
-        ...prev.split(/[\s,]+/),
-        ...data.equipmentList.split(/[\s,]+/)
-      ])).filter(Boolean).join(' ');
-      return combined;
+    loadMergedServerResults([data]);
+  };
+
+  // Helper to load and merge multiple parsed objects into active fields
+  const loadMergedServerResults = (results: DigitizeResponse[]) => {
+    if (results.length === 0) {
+      setIsProcessing(false);
+      return;
+    }
+
+    // Capture the first valid metadata fields
+    const firstWithVessel = results.find(r => r.vessel);
+    if (firstWithVessel && !vessel) {
+      setVessel(firstWithVessel.vessel || '');
+    }
+
+    const firstWithDate = results.find(r => r.date);
+    if (firstWithDate && (!date || date === '2-Jun')) {
+      setDate(firstWithDate.date || '2-Jun');
+    }
+
+    const firstWithShift = results.find(r => r.shift);
+    if (firstWithShift) {
+      setShift(firstWithShift.shift || '1');
+    }
+
+    const firstWithForeman = results.find(r => r.foreman);
+    if (firstWithForeman && !foreman) {
+      setForeman(firstWithForeman.foreman || '');
+    }
+
+    const firstWithElectrician = results.find(r => r.electrician);
+    if (firstWithElectrician && !electrician) {
+      setElectrician(firstWithElectrician.electrician || '');
+    }
+
+    // Combine equipmentList from all files
+    const allEqCodes = results.map(r => r.equipmentList || '').filter(Boolean);
+    if (allEqCodes.length > 0) {
+      setEquipmentList(prev => {
+        const combined = Array.from(new Set([
+          ...prev.split(/[\s,]+/),
+          ...allEqCodes.flatMap(codeStr => codeStr.split(/[\s,]+/))
+        ])).filter(Boolean).join(' ');
+        return combined;
+      });
+    }
+
+    // Map rows of all sheets
+    const newRows: DigitizedRow[] = [];
+    results.forEach((data) => {
+      const sheetDate = data.date || date || '2-Jun';
+      const mappedRows: DigitizedRow[] = (data.rows || []).map((r) => {
+        const opsOrMaint = r.opsOrMaint || '';
+        const hasOOrM = opsOrMaint === 'O' || opsOrMaint === 'M';
+        const isIgnored = r.isIgnored || !hasOOrM;
+        const ignoreReason = r.isIgnored 
+          ? (r.ignoreReason || '') 
+          : (!hasOOrM ? 'No O or M indicator' : '');
+        return {
+          ...r,
+          id: generateId(),
+          rawEquipmentCode: r.rawEquipmentCode || '',
+          equipmentCode: r.equipmentCode || '',
+          reportedProblem: r.reportedProblem || '',
+          resolution: r.resolution || '',
+          opsOrMaint,
+          faultCode: r.faultCode || '',
+          startTime: r.startTime || '',
+          endTime: r.endTime || '',
+          delayMinutes: r.delayMinutes || 0,
+          details: r.details || '',
+          isIgnored,
+          ignoreReason,
+          date: sheetDate, // Assign form-specific date to row!
+        };
+      });
+      newRows.push(...mappedRows);
     });
 
-    // Map rows with unique local UUID tags
-    const mappedRows: DigitizedRow[] = (data.rows || []).map((r) => ({
-      ...r,
-      id: generateId(),
-      // Guard against missing properties
-      rawEquipmentCode: r.rawEquipmentCode || '',
-      equipmentCode: r.equipmentCode || '',
-      reportedProblem: r.reportedProblem || '',
-      resolution: r.resolution || '',
-      opsOrMaint: r.opsOrMaint || '',
-      faultCode: r.faultCode || '',
-      startTime: r.startTime || '',
-      endTime: r.endTime || '',
-      delayMinutes: r.delayMinutes || 0,
-      details: r.details || '',
-      isIgnored: r.isIgnored || false,
-    }));
+    setRows(prev => [...prev, ...newRows]);
 
-    setRows(prev => [...prev, ...mappedRows]);
-    
-    // Auto-switch to appropriate tab based on extracted values
-    if (mappedRows.length > 0) {
-      setSelectedTab(mappedRows[0].equipmentType);
+    // Auto-switch to appropriate tab based on newly extracted values
+    if (newRows.length > 0) {
+      setSelectedTab(newRows[0].equipmentType);
     }
-    
+
     setIsProcessing(false);
     setScanError(null);
   };
@@ -364,7 +421,7 @@ export default function App() {
               
               <div className="p-5">
                 <UploadZone
-                  onImageSelected={handleImageDigitize}
+                  onImagesSelected={handleImagesDigitize}
                   onSampleSelected={handleLoadSample}
                   isProcessing={isProcessing}
                   statusMessage={statusMessage}

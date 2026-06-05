@@ -172,13 +172,13 @@ Rules for fields:
       - RMG: "60" + 2-digit padded raw number (e.g. RMG 01 -> "6001").
    d. "reportedProblem": Handwritten reported symptom (e.g., "No gantry", "HOIST CUTS OUT", "O/H. GEAR").
    e. "resolution": Handwritten resolution details (e.g., "Gantry ok slow to start moving...", "HOIST DRIVE FLT.").
-   f. "opsOrMaint": Categorization. Look for circled "O" (Ops) or "M" (Maint). If M has a red line/slash crossing it out, and O is green circled, select "O". Or vice versa. If O is circled with green, it is "O". If M is circled with green, it is "M". If neither, default to "".
+   f. "opsOrMaint": Categorization. Look for circled "O" (Ops) or "M" (Maint). If M has a red line/slash crossing it out, and O is green circled, select "O". Or vice versa. If O is circled with green, it is "O". If M is circled with green, it is "M". If neither, default to "". If neither "O" nor "M" is circled/selected or exists, the entry is invalid and must be ignored.
    g. "faultCode": "OPD" for "O", or "ENG" for "M". Default empty if neither can be identified.
    h. "startTime" and "endTime": Start and Finish times (e.g. "5:55" and "6:30"). Preserve the exact handwritten hours and minutes.
    i. "delayMinutes": Calculate time duration. Calculate absolute difference in minutes. For example, 1:20 to 1:32 = 12 mins. 5:55 to 6:30 = 35 mins. 5:11 to 5:18 = 7 mins. 5:27 to 5:32 = 5 mins. Ensure calculations are exact!
    j. "details": Excel details description. Combine "REPORTED_PROBLEM - RESOLUTION" neatly (e.g. "No gantry - Gantry ok slow to start moving Brk Rel Time out" or "HOIST CUTS OUT - HOIST DRIVE FLT."). Expand abbreviations where appropriate to sound professional and clear.
-   k. "isIgnored": Set to true if a whole row has a red horizontal line/diagonal line slashing or crossing through it (e.g., the whole Crane 4 row in Image 1 is slashed with a red diagonal line). If just a single cell or letter is corrected with a slash (like the M in RMG 60 01 being slashed out and O circled in green next to it in Image 2), the row is NOT ignored! Only ignore if the entire row's data is slashed/crossed out or explicitly cancelled.
-   l. "ignoreReason": E.g. "Red line cross out" or empty.
+   k. "isIgnored": Set to true if a whole row has a red horizontal line/diagonal line slashing or crossing through it (e.g., the whole Crane 4 row in Image 1 is slashed with a red diagonal line). Crucially, also set to true if neither "O" nor "M" is selected/indicated for the row. If just a single cell or letter is corrected with a slash (like the M in RMG 60 01 being slashed out and O circled in green next to it in Image 2), the row is NOT ignored! Only ignore if the entire row's data is slashed/crossed out, explicitly cancelled, or has no "O" or "M" indicator.
+   l. "ignoreReason": E.g. "Red line cross out", "No O or M indicator", or empty.
 `;
 
       const prompt = `Please analyze this image of a delay log and extract all headers and row logs according to the specified instructions. Run OCR on all fields. Make sure to carefully process green circles and red crossings, and output valid JSON.`;

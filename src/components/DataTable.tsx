@@ -99,7 +99,7 @@ export default function DataTable({
     // Columns format: Date | Equipment Code | Fault Code | Delay (min)
     const tsvContent = activeValidRows
       .map(row => {
-        const dateStr = globalDate || '2-Jun';
+        const dateStr = row.date || globalDate || '2-Jun';
         const code = row.equipmentCode || '';
         const fault = row.faultCode || '';
         const delay = row.delayMinutes !== undefined ? row.delayMinutes : '';
@@ -125,7 +125,7 @@ export default function DataTable({
 
     const headers = ['Date', 'Equipment Code', 'Fault Code', 'Delay (min)'];
     const rowsList = activeValidRows.map(row => [
-      globalDate || '2-Jun',
+      row.date || globalDate || '2-Jun',
       row.equipmentCode || '',
       row.faultCode || '',
       row.delayMinutes !== undefined ? String(row.delayMinutes) : ''
@@ -206,8 +206,15 @@ export default function DataTable({
                   }`}
                 >
                   {/* Date Column */}
-                  <td className="py-3 px-3.5 font-medium tabular-nums text-[#475569] font-mono text-xs">
-                    {globalDate || '2-Jun'}
+                  <td className="py-2.5 px-3.5">
+                    <input
+                      id={`input-row-date-${row.id}`}
+                      type="text"
+                      value={row.date || globalDate || '2-Jun'}
+                      onChange={(e) => onUpdateRow(row.id, { date: e.target.value })}
+                      placeholder="2-Jun"
+                      className="w-16 bg-transparent border-b border-slate-200 focus:border-[#0284C7] font-mono px-0.5 py-0.5 text-xs outline-hidden text-[#475569] shrink-0"
+                    />
                   </td>
 
                   {/* Equipment Code Column */}
