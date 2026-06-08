@@ -160,6 +160,7 @@ Rules for fields:
 3. "foreman" and "electrician": Extract names from Foreman and Electrician headers.
 4. "shift": Standard Shift number (e.g., "1").
 5. "rows": Array of each row in the main log table. Only extract rows where something was written!
+   IMPORTANT: If a handwritten row lists multiple equipment codes/numbers (for example, "3 & 4" or "09 & 10" or "5 & 2" or "5 &2" under Crane), you should split them into separate objects in the "rows" array. Each split object should have the exact same information (times, details, comments, reportedProblem, resolution, etc.) but with its own individual equipmentCode and rawEquipmentCode. For example, if an RMG row lists "03 & 4" (representing RMG 6003 and RMG 6004), generate one object for RMG 6003 (rawEquipmentCode "03", equipmentCode "6003") and a second separate object with the exact same details/times for RMG 6004 (rawEquipmentCode "4", equipmentCode "6004"). If a Crane row lists "5 & 2" (representing Crane 4005 and Crane 4002), generate one object with "4005" (raw "5") and a second separate object with "4002" (raw "2") with the exact same details/times/etc.
    For each row:
    a. "equipmentType": Should be "CRANE", "RTG", or "RMG".
       - "CRANE": From Crane Delay Log.
@@ -271,6 +272,60 @@ Rules for fields:
         console.error('[API] Cleaned substring for parse was:', cleanedText);
         console.error('[API] Parse error message:', jsonErr.message);
         throw new Error(`The digitization results from the AI model were not in a valid JSON format. Details: ${jsonErr.message}`);
+      }
+
+      // Safeguard: Post-processing to split rows if multiple equipment codes are written in a single line
+      if (parsedData && Array.isArray(parsedData.rows)) {
+        const expandedRows: any[] = [];
+        for (const r of parsedData.rows) {
+          const rawCodeStr = String(r.rawEquipmentCode || '').trim();
+          const eqCodeStr = String(r.equipmentCode || '').trim();
+          
+          // Pattern checking for common multiple indicators: "&", "and", ",", "/"
+          const splitPattern = /&|\band\b|,|\//i;
+          
+          if (!splitPattern.test(rawCodeStr) && !splitPattern.test(eqCodeStr)) {
+            expandedRows.push(r);
+            continue;
+          }
+
+          let rawTokens: string[] = [];
+          if (splitPattern.test(rawCodeStr)) {
+            rawTokens = rawCodeStr.split(splitPattern).map(s => s.trim()).filter(Boolean);
+          } else {
+            const eqTokens = eqCodeStr.split(splitPattern).map(s => s.trim()).filter(Boolean);
+            rawTokens = eqTokens.map(eq => {
+              if (eq.length === 4 && (eq.startsWith('40') || eq.startsWith('50') || eq.startsWith('60'))) {
+                return eq.substring(2);
+              }
+              return eq;
+            });
+          }
+
+          if (rawTokens.length <= 1) {
+            expandedRows.push(r);
+            continue;
+          }
+
+          const type = String(r.equipmentType || 'CRANE').toUpperCase();
+          let prefix = '40';
+          if (type === 'RTG') prefix = '50';
+          else if (type === 'RMG') prefix = '60';
+
+          for (const token of rawTokens) {
+            let paddedToken = token;
+            if (/^\d+$/.test(token)) {
+              paddedToken = token.padStart(2, '0');
+            }
+            const computedEqCode = prefix + paddedToken;
+            expandedRows.push({
+              ...r,
+              rawEquipmentCode: token,
+              equipmentCode: computedEqCode,
+            });
+          }
+        }
+        parsedData.rows = expandedRows;
       }
 
       res.json({
