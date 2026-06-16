@@ -68,16 +68,21 @@ async function startServer() {
   async function generateContentWithRetryAndFallback(ai: GoogleGenAI, baseParams: any) {
     const modelsToTry = [
       'gemini-2.5-flash',
-      'gemini-3.5-flash'
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.1-pro-preview',
+      'gemini-2.5-pro'
     ];
 
     let lastError: any = null;
+    let isQuotaErrorEncountered = false;
 
     for (let m = 0; m < modelsToTry.length; m++) {
       const currentModel = modelsToTry[m];
       console.log(`[Gemini API] Attempting generation with model: ${currentModel}`);
 
-      const maxRetries = (currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-2.5-flash') ? 3 : 2;
+      const maxRetries = 3;
       let delay = 1000;
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -96,6 +101,16 @@ async function startServer() {
           lastError = error;
           const errMsg = String(error.message || error);
           console.warn(`[Gemini API] Attempt ${attempt} failed for model ${currentModel}. Error: ${errMsg}`);
+
+          if (
+            errMsg.toLowerCase().includes('quota') ||
+            errMsg.toLowerCase().includes('rate limit') ||
+            errMsg.toLowerCase().includes('resource_exhausted') ||
+            error.status === 'RESOURCE_EXHAUSTED' ||
+            error.statusCode === 429
+          ) {
+            isQuotaErrorEncountered = true;
+          }
 
           const retryable = isRetryableError(error);
           if (retryable && attempt < maxRetries) {
@@ -117,6 +132,13 @@ async function startServer() {
       }
     }
 
+    if (isQuotaErrorEncountered) {
+      throw new Error(
+        'You have temporarily exceeded the daily Gemini API quota on the free tier. ' +
+        'To bypass this limit, please configure your own Google AI Studio API Key in the "Settings > Secrets" panel.'
+      );
+    }
+
     throw lastError || new Error('All Gemini API models failed to process the request due to high demand');
   }
 
@@ -130,24 +152,30 @@ async function startServer() {
   // Digitize paper log
   app.post('/api/digitize', async (req, res) => {
     try {
-      const { image, mimeType } = req.body;
+      let imagesBatch: { data: string; mimeType: string }[] = [];
 
-      if (!image || !mimeType) {
-        res.status(400).json({ success: false, error: 'Missing image data or mimeType' });
+      if (req.body.images && Array.isArray(req.body.images)) {
+        imagesBatch = req.body.images;
+      } else if (req.body.image && req.body.mimeType) {
+        imagesBatch = [{ data: req.body.image, mimeType: req.body.mimeType }];
+      }
+
+      if (imagesBatch.length === 0) {
+        res.status(400).json({ success: false, error: 'Missing image data or images batch array' });
         return;
       }
 
-      console.log(`[API] Received digitize request, image length: ${image.length}, type: ${mimeType}`);
+      console.log(`[API] Received digitize request with ${imagesBatch.length} images in batch.`);
 
       const ai = getGeminiClient();
 
       // Setup parts for multimodal Gemini model
-      const imagePart = {
+      const imageParts = imagesBatch.map((img: any) => ({
         inlineData: {
-          mimeType: mimeType,
-          data: image,
+          mimeType: img.mimeType,
+          data: img.data,
         },
-      };
+      }));
 
       const systemInstruction = `
 You are an expert OCR and terminal ops data-digitization tool. You analyze handwriting in crane and RTG/RMG delay logs, extracting structured log data.
@@ -155,7 +183,7 @@ Identify if the document is a "Crane Delay Log" or a "RTG and RMG Delay Log" bas
 Extract key headers and each row in the log. Return a strictly conforming JSON result.
 
 Rules for fields:
-1. "date": Extract date (e.g. "2-Jun-26") from header. Formats should be standardized as "D-MMM" (e.g., "2-Jun").
+1. "date": Extract date from the top header. Standardize all dates to "D-MMM" format (e.g. "2-Jun", "20-Apr", "12-Jun", "9-Jun", "14-Jun").
 2. "vessel": Extract "Frankfurt Express" or other vessel name from the Vessel field if present, or leave empty.
 3. "foreman" and "electrician": Extract names from Foreman and Electrician headers.
 4. "shift": Standard Shift number (e.g., "1").
@@ -165,27 +193,32 @@ Rules for fields:
    a. "equipmentType": Should be "CRANE", "RTG", or "RMG".
       - "CRANE": From Crane Delay Log.
       - "RTG": From RTG/RMG Delay Log, for rows starting with "50" or having RTG context.
-      - "RMG": From RTG/RMG Delay Log, specifically if RMG is written (e.g., in the leftmost margin next to the 60 code) or for rows starting with "60".
-   b. "rawEquipmentCode": Extract the handwritten number part (e.g., "7" or "09" or "01").
+      - "RMG": From RTG/RMG Delay Log. CRITICAL HANDWRITTEN OVERRIDES: If a row has printed "50--" or "RTG" or is in the RTG section, but has a manual handwritten correction (e.g. someone wrote "RMG" next to it, crossed out the printed "50", crossed out "RTG", or changed the prefix to write "60" or "600-"), you MUST classify this row as equipmentType "RMG" and NOT "RTG".
+     b. "rawEquipmentCode": Extract the handwritten number part (e.g., "7" or "09" or "01").
    c. "equipmentCode": The computed equipment code of format:
       - Crane: "40" + 2-digit padded raw number (e.g. Crane 7 -> "4007", Crane 4 -> "4004"). Let's pad it carefully! E.g., Crane 12 is "4012".
       - RTG: "50" + 2-digit padded raw number (e.g. RTG 09 -> "5009").
-      - RMG: "60" + 2-digit padded raw number (e.g. RMG 01 -> "6001").
+      - RMG: "60" + 2-digit padded raw number (e.g. RMG 01 -> "6001"). Note: If an RTG entry was manually corrected with a cross-out to be RMG or 600-, the prefix MUST be "60" instead of "50" (e.g., "6001").
    d. "reportedProblem": Handwritten reported symptom (e.g., "No gantry", "HOIST CUTS OUT", "O/H. GEAR").
    e. "resolution": Handwritten resolution details (e.g., "Gantry ok slow to start moving...", "HOIST DRIVE FLT.").
-   f. "opsOrMaint": Categorization. Look for circled "O" (Ops) or "M" (Maint). If M has a red line/slash crossing it out, and O is green circled, select "O". Or vice versa. If O is circled with green, it is "O". If M is circled with green, it is "M". If neither, default to "". If neither "O" nor "M" is circled/selected or exists, the entry is invalid and must be ignored.
+   f. "opsOrMaint": Categorization. Look for circled "O" (Ops) or "M" (Maint). If an M is crossed/slashed out AND an O is present/circled/indicated, select "O". If an O is crossed/slashed out AND an M is present/circled/indicated, select "M". In any case where an "O" or "M" is crossed out with no replacement, or if neither is selected, leave "opsOrMaint" as empty "".
    g. "faultCode": "OPD" for "O", or "ENG" for "M". Default empty if neither can be identified.
    h. "startTime" and "endTime": Start and Finish times (e.g. "5:55" and "6:30"). Preserve the exact handwritten hours and minutes.
    i. "delayMinutes": Calculate time duration. Calculate absolute difference in minutes. For example, 1:20 to 1:32 = 12 mins. 5:55 to 6:30 = 35 mins. 5:11 to 5:18 = 7 mins. 5:27 to 5:32 = 5 mins. Ensure calculations are exact!
    j. "details": Excel details description. Combine "REPORTED_PROBLEM - RESOLUTION" neatly (e.g. "No gantry - Gantry ok slow to start moving Brk Rel Time out" or "HOIST CUTS OUT - HOIST DRIVE FLT."). Expand abbreviations where appropriate to sound professional and clear.
-   k. "isIgnored": Set to true if a whole row has a red horizontal line/diagonal line slashing or crossing through it (e.g., the whole Crane 4 row in Image 1 is slashed with a red diagonal line). Crucially, also set to true if neither "O" nor "M" is selected/indicated for the row. If just a single cell or letter is corrected with a slash (like the M in RMG 60 01 being slashed out and O circled in green next to it in Image 2), the row is NOT ignored! Only ignore if the entire row's data is slashed/crossed out, explicitly cancelled, or has no "O" or "M" indicator.
+   k. "isIgnored": Set to true if any of the following apply: (1) The whole row is slashed/crossed out horizontally or diagonally with a line. (2) There is an "M" or "O" crossed out with no replacement. (3) Neither "O" nor "M" is circled/selected or exists for the row. If an "M" or "O" is crossed out BUT has a replacement selected (e.g., M is crossed out and O is circled as the replacement, or vice versa), the row is NOT ignored! Only ignore if the entire row's data is slashed/crossed out, explicitly cancelled, or there is no "O" or "M" indicator/replacement.
    l. "ignoreReason": E.g. "Red line cross out", "No O or M indicator", or empty.
+   m. "date": The standardized date format "D-MMM" (e.g., "12-Jun", "20-Apr", "9-Jun", "14-Jun") extracted from the header (top-left or top section) of the specific page/image where this row is found. Each sheet in the batch might have a different date; ensure that the "date" field for each row matches the date shown on its specific sheet!
 `;
 
-      const prompt = `Please analyze this image of a delay log and extract all headers and row logs according to the specified instructions. Run OCR on all fields. Make sure to carefully process green circles and red crossings, and output valid JSON.`;
+      const prompt = `You are processing a batch of delay log images. Treat each image as an independent page. Analyze all images in the order provided.
+Extract all valid delay log entries from every image.
+For each row, find the date header on its specific page (usually top left, formatted in various ways, for example: "April 20 2026", "12-jun-26", "12-june-2026", "12-june-26", "Jun 9 2026", "9-Jun-26", etc.). Standardize that page's date to "D-MMM" format (e.g., "20-Apr", "12-Jun", "9-Jun", "14-Jun") and assign it to the row's "date" field.
+Do not assign the same date to all rows if they come from pages with different dates.
+Return one JSON response containing all extracted rows from the entire batch.`;
 
       const response = await generateContentWithRetryAndFallback(ai, {
-        contents: { parts: [imagePart, { text: prompt }] },
+        contents: { parts: [...imageParts, { text: prompt }] },
         config: {
           systemInstruction: systemInstruction,
           responseMimeType: 'application/json',
@@ -215,7 +248,8 @@ Rules for fields:
                     delayMinutes: { type: Type.INTEGER },
                     details: { type: Type.STRING },
                     isIgnored: { type: Type.BOOLEAN },
-                    ignoreReason: { type: Type.STRING }
+                    ignoreReason: { type: Type.STRING },
+                    date: { type: Type.STRING, description: "The standardized date 'D-MMM' (e.g., '2-Jun') from the header at the top of the specific page/image where this row is found" }
                   },
                   required: [
                     'equipmentType',
@@ -229,7 +263,8 @@ Rules for fields:
                     'endTime',
                     'delayMinutes',
                     'details',
-                    'isIgnored'
+                    'isIgnored',
+                    'date'
                   ]
                 }
               }

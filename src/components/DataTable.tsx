@@ -40,7 +40,7 @@ export default function DataTable({
   // Filter rows for this specific equipment tab
   const activeUnsortedRows = rows.filter(r => r.equipmentType === equipmentType);
 
-  // Sort rows chronologically by date
+  // Sort rows chronologically by date first, preserving original page order for rows on the same day
   const activeRows = [...activeUnsortedRows].sort((a, b) => {
     const valA = parseDateToComparable(a.date || '', globalDate);
     const valB = parseDateToComparable(b.date || '', globalDate);

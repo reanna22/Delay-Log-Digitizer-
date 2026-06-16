@@ -76,13 +76,12 @@ export default function App() {
     }
   };
 
-  // Triggers visual OCR digitization on the backend for one or more files in parallel
+  // Triggers visual OCR digitization on the backend using batch-based processing (15 images per batch)
   const handleImagesDigitize = async (images: { base64: string; fileType: string; name?: string }[]) => {
     if (images.length === 0) return;
 
     setIsProcessing(true);
     setScanError(null);
-    setStatusMessage(`Processing 1 of ${images.length} images...`);
 
     // Save thumbnail preview (using first image in the batch)
     setCurrentPreviewUrl(`data:${images[0].fileType};base64,${images[0].base64}`);
@@ -90,51 +89,56 @@ export default function App() {
     const names = images.map(img => img.name || 'document_img').join(', ');
     setActiveFileName(images.length > 1 ? `Batch (${images.length} files): ${names}` : (images[0].name || 'Uploaded log'));
 
-    const steps = [
-      'Reading handwritten headers...',
-      'Identifying log types (Crane vs RTG/RMG)...',
-      'Scanning green circles & Ops/Maint categories...',
-      'Converting equipment codes...',
-      'Calculating delay durations & details...',
-      'Merging independent results into database...'
-    ];
-
-    let currentStep = 0;
-    setStatusMessage(steps[0]);
-    const interval = setInterval(() => {
-      if (currentStep < steps.length - 1) {
-        currentStep++;
-        setStatusMessage(steps[currentStep]);
-      }
-    }, 2005);
+    const batchSize = 15;
+    const totalBatches = Math.ceil(images.length / batchSize);
+    const results: DigitizeResponse[] = [];
+    let hasAtLeastOneSuccess = false;
+    let fallbackErrorMessage = '';
 
     try {
-      // Process all images in parallel for maximum speed
-      const results = await Promise.all(
-        images.map(async (img, idx) => {
-          console.log(`[App] Dispatching digitize request for image ${idx + 1}/${images.length}`);
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        // Display precise progress as required
+        setStatusMessage(`Processing batch ${batchIdx + 1} of ${totalBatches}...`);
+
+        const startIdx = batchIdx * batchSize;
+        const endIdx = Math.min(startIdx + batchSize, images.length);
+        const batchImages = images.slice(startIdx, endIdx);
+
+        try {
+          console.log(`[App] Dispatching digitize request for batch ${batchIdx + 1}/${totalBatches} containing ${batchImages.length} images`);
+          
           const response = await fetch('/api/digitize', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ image: img.base64, mimeType: img.fileType }),
+            body: JSON.stringify({
+              images: batchImages.map(img => ({ data: img.base64, mimeType: img.fileType }))
+            }),
           });
 
           const result = await response.json();
           if (!response.ok || !result.success) {
-            throw new Error(result.error || `Failed digitizing image #${idx + 1}`);
+            throw new Error(result.error || `Failed digitizing batch #${batchIdx + 1}`);
           }
-          return result.data as DigitizeResponse;
-        })
-      );
 
-      clearInterval(interval);
-      loadMergedServerResults(results);
+          results.push(result.data as DigitizeResponse);
+          hasAtLeastOneSuccess = true;
+        } catch (err: any) {
+          console.error(`Batch ${batchIdx + 1} processing failed:`, err);
+          fallbackErrorMessage = err.message || `Failed digitizing batch #${batchIdx + 1}`;
+          // Continue processing remaining batches even if one fails
+        }
+      }
+
+      if (hasAtLeastOneSuccess && results.length > 0) {
+        loadMergedServerResults(results);
+      } else {
+        throw new Error(fallbackErrorMessage || 'All digitization batches failed.');
+      }
 
     } catch (err: any) {
-      clearInterval(interval);
-      console.error('Batch parsing failed:', err);
+      console.error('All batches failed or final loading failed:', err);
       setScanError(
         err.message || 
         'Batch scan failed. Make sure your internet connection is active, and ensure your GEMINI_API_KEY is configured in Settings > Secrets.'
@@ -219,7 +223,7 @@ export default function App() {
           details: r.details || '',
           isIgnored,
           ignoreReason,
-          date: sheetDate, // Assign form-specific date to row!
+          date: r.date || sheetDate, // Assign row-level date if extracted, fallback to sheet-level date
         };
       });
       newRows.push(...mappedRows);

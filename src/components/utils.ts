@@ -85,3 +85,26 @@ export function parseDateToComparable(dateStr: string, globalDateFallback?: stri
   return 0;
 }
 
+/**
+ * Convert time string to minutes since midnight for sorting
+ * e.g., "08:30" -> 510, "14:15" -> 855
+ */
+export function parseTimeToMinutes(timeStr: string): number {
+  if (!timeStr) return 0;
+  const cleaned = timeStr.trim().replace('.', ':');
+  const parts = cleaned.split(':');
+  if (parts.length < 2) {
+    const matches = cleaned.match(/\d+/);
+    if (matches) {
+      const h = parseInt(matches[0], 10);
+      if (!isNaN(h)) return h * 60;
+    }
+    return 0;
+  }
+  const h = parseInt(parts[0].replace(/\D/g, ''), 10);
+  const m = parseInt(parts[1].replace(/\D/g, ''), 10);
+  if (isNaN(h)) return 0;
+  return h * 60 + (isNaN(m) ? 0 : m);
+}
+
+
