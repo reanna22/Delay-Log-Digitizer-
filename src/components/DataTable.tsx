@@ -12,7 +12,8 @@ import {
   Ban,
   Clock,
   ExternalLink,
-  Edit2
+  Edit2,
+  Wrench
 } from 'lucide-react';
 
 interface DataTableProps {
@@ -47,9 +48,15 @@ export default function DataTable({
     return valA - valB;
   });
 
-  // Time calculations and total sums for the active tab
+  // Time calculations and total sums for the active tab (separated by Ops and Maint)
   const activeValidRows = activeRows.filter(r => !r.isIgnored);
   const totalDelays = activeValidRows.reduce((sum, r) => sum + (r.delayMinutes || 0), 0);
+  const maintDelays = activeValidRows
+    .filter(r => r.opsOrMaint === 'M' || r.faultCode === 'ENG')
+    .reduce((sum, r) => sum + (r.delayMinutes || 0), 0);
+  const opsDelays = activeValidRows
+    .filter(r => r.opsOrMaint === 'O' || r.faultCode === 'OPD')
+    .reduce((sum, r) => sum + (r.delayMinutes || 0), 0);
   const activeCount = activeValidRows.length;
   const ignoredCount = activeRows.length - activeCount;
 
@@ -154,21 +161,45 @@ export default function DataTable({
     <div id={`table-container-${equipmentType}`} className="space-y-4">
       
       {/* Stats Summary Panel */}
-      <div id="stats-banner" className="grid grid-cols-3 gap-3 bg-[#F8FAFC] border border-slate-200/80 p-4 rounded-xl">
+      <div id="stats-banner" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 bg-[#F8FAFC] border border-slate-200/80 p-3.5 rounded-xl">
         <div id="stat-incidents" className="flex flex-col">
           <span className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Valid Incidents</span>
           <span className="text-xl font-bold text-[#1E293B] tabular-nums mt-0.5">
             {activeCount} <span className="text-xs font-normal text-slate-400">active</span>
           </span>
         </div>
-        <div id="stat-total-delay" className="flex flex-col border-x border-slate-200/80 px-4">
+
+        <div id="stat-maint-delay" className="flex flex-col sm:border-l sm:border-slate-200/80 sm:pl-3">
+          <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider flex items-center gap-1">
+            Total Maint Delay
+          </span>
+          <span className="text-xl font-bold text-amber-600 tabular-nums flex items-center gap-1.5 mt-0.5">
+            <Wrench className="h-4 w-4 shrink-0 text-amber-600" />
+            {maintDelays} <span className="text-xs font-normal text-slate-500">mins</span>
+            <span className="ml-1 text-[9px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-mono">ENG</span>
+          </span>
+        </div>
+
+        <div id="stat-ops-delay" className="flex flex-col sm:border-l sm:border-slate-200/80 sm:pl-3">
+          <span className="text-[10px] font-semibold text-sky-700 uppercase tracking-wider flex items-center gap-1">
+            Total Ops Delay
+          </span>
+          <span className="text-xl font-bold text-sky-600 tabular-nums flex items-center gap-1.5 mt-0.5">
+            <Clock className="h-4 w-4 shrink-0 text-sky-600" />
+            {opsDelays} <span className="text-xs font-normal text-slate-500">mins</span>
+            <span className="ml-1 text-[9px] font-bold bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded font-mono">OPD</span>
+          </span>
+        </div>
+
+        <div id="stat-total-delay" className="flex flex-col lg:border-l lg:border-slate-200/80 lg:pl-3">
           <span className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Total Delay Time</span>
           <span className="text-xl font-bold text-[#0284C7] tabular-nums flex items-center gap-1.5 mt-0.5">
             <Clock className="h-4 w-4 shrink-0 text-[#0284C7]" />
             {totalDelays} <span className="text-xs font-normal text-slate-500">mins</span>
           </span>
         </div>
-        <div id="stat-ignored" className="flex flex-col pl-2">
+
+        <div id="stat-ignored" className="flex flex-col sm:border-l sm:border-slate-200/80 sm:pl-3">
           <span className="text-[10px] font-semibold text-[#64748B] uppercase tracking-wider">Ignored Rows</span>
           <span className="text-xl font-bold text-slate-400 tabular-nums mt-0.5">
             {ignoredCount} <span className="text-xs font-normal text-slate-300">filtered</span>
@@ -339,6 +370,36 @@ export default function DataTable({
               ))
             )}
           </tbody>
+          {activeValidRows.length > 0 && (
+            <tfoot className="bg-slate-50/90 border-t-2 border-slate-200 font-medium text-xs text-slate-700">
+              <tr>
+                <td colSpan={2} className="py-2.5 px-3.5 font-bold text-slate-500 uppercase text-[10px] tracking-wider">
+                  Summary Totals ({activeCount} active)
+                </td>
+                <td className="py-2.5 px-3 text-[11px]">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-amber-800 font-semibold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                      Maint (ENG):
+                    </span>
+                    <span className="text-sky-800 font-semibold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+                      Ops (OPD):
+                    </span>
+                  </div>
+                </td>
+                <td className="py-2.5 px-3 font-mono font-bold">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-amber-700">{maintDelays} mins</span>
+                    <span className="text-sky-700">{opsDelays} mins</span>
+                  </div>
+                </td>
+                <td className="py-2.5 px-3.5 text-center text-[10px] text-slate-500 font-mono">
+                  All: <span className="font-bold text-[#0284C7]">{totalDelays}m</span>
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
 
